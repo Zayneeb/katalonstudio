@@ -1,0 +1,2 @@
+FROM nginx:alpine
+COPY ./sample-site/ /usr/share/nginx/html/
