@@ -1,0 +1,112 @@
+pipeline {
+  agent any
+  options { timestamps() }
+
+  environment {
+    IMAGE = 'zaynebsakh/monapp'
+    TAG   = "build-${env.BUILD_NUMBER}"
+
+    // 💡 KRE installé localement (exemple) : C:\Katalon\katalon.exe
+    KRE   = 'C:\\Katalon\\katalon.exe'
+    // Stocke ta clé dans Jenkins > Credentials (Secret Text) sous l'ID 'katalon_api_key'
+    // et on la récupère dans la stage via withCredentials.
+  }
+
+  stages {
+    stage('Checkout App') {
+      steps {
+        // Repo applicatif (le même que le job)
+        checkout scm
+      }
+    }
+
+    stage('Checkout Katalon Tests') {
+      steps {
+        dir('katalon-tests') {
+          git branch: 'master',
+              url: 'https://github.com/Zayneeb/katalonstudio.git'
+          // Le projet cible : sample-windows-application-test-master
+          // Adapte si tu changes d’exemple (web vs desktop)
+        }
+      }
+    }
+
+    stage('Docker Build') {
+      steps {
+        bat 'docker version'
+        bat "docker build -t %IMAGE%:%TAG% ."
+      }
+    }
+
+    stage('Run App (for tests)') {
+      steps {
+        bat """
+          docker rm -f monapp_test 2>nul || ver > nul
+          docker run -d --name monapp_test -p 8081:80 %IMAGE%:%TAG%
+          ping -n 5 127.0.0.1 > nul
+        """
+        // Sanity ping HTTP
+        bat 'curl -s -I http://localhost:8081 | find "200"'
+      }
+    }
+
+    stage('Katalon Tests') {
+      steps {
+        withCredentials([string(credentialsId: 'katalon_api_key', variable: 'KATALON_API_KEY')]) {
+          // 🔁 Exemple d’exécution Katalon en console
+          // Si tu fais des tests Web, passe l’URL à Katalon via un GlobalVariable :
+          //    -g_baseUrl=http://localhost:8081
+          // Adapte le chemin du .prj et la suite de tests.
+          bat """
+            "%KRE%" -noSplash -runMode=console ^
+              -projectPath="%WORKSPACE%\\katalon-tests\\sample-windows-application-test-master\\sample-windows-application-test.prj" ^
+              -retry=0 -retryFailedTestCases=false ^
+              -testSuitePath="Test Suites/Smoke" ^
+              -executionProfile="default" ^
+              -browserType="Chrome (headless)" ^
+              -apiKey="%KATALON_API_KEY%" ^
+              -reportFolder="Reports" -reportFileName="ui_smoke" ^
+              -g_baseUrl=http://localhost:8081
+          """
+        }
+      }
+    }
+
+    stage('Collect Reports') {
+      steps {
+        // ⚠️ Adapte ce pattern selon la structure “Reports” générée par Katalon
+        junit allowEmptyResults: true, testResults: 'katalon-tests/**/Reports/**/*.xml'
+        archiveArtifacts artifacts: 'katalon-tests/**/Reports/**', fingerprint: true
+      }
+    }
+
+    stage('Stop Test App') {
+      steps {
+        bat 'docker rm -f monapp_test'
+      }
+    }
+
+    stage('Push (Docker Hub)') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                                          usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+          bat """
+            echo %PASS% | docker login -u %USER% --password-stdin
+            docker tag %IMAGE%:%TAG% %IMAGE%:latest
+            docker push %IMAGE%:%TAG%
+            docker push %IMAGE%:latest
+          """
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      // Nettoyage au cas où
+      bat 'docker rm -f monapp_test 2>nul || ver > nul'
+    }
+    success { echo 'Build + Katalon Tests + Push : OK ✅' }
+    failure { echo '⛔ Echec dans Build/Tests/Push — voir logs' }
+  }
+}
