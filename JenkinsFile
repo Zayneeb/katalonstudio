@@ -1,20 +1,16 @@
 pipeline {
   agent any
-  options { timestamps(); ansiColor('xterm') }
+  options { timestamps() }   // ← ansiColor retiré
 
   environment {
-    // Chemin vers Katalon Runtime Engine
-    KRE = 'C:\\Katalon\\katalon.exe'
+    KRE = 'C:\\Katalon\\katalon.exe'   // adapte si besoin
   }
 
   stages {
     stage('Checkout Katalon Project') {
-      steps {
-        checkout scm  // ton repo public https://github.com/Zayneeb/katalonstudio.git
-      }
+      steps { checkout scm }
     }
 
-    // Lance WinAppDriver si tu testes une appli Windows desktop
     stage('Start WinAppDriver (Desktop)') {
       steps {
         bat 'tasklist | find "WinAppDriver.exe" || start /B "" "C:\\Program Files (x86)\\Windows Application Driver\\WinAppDriver.exe"'
